@@ -1,7 +1,8 @@
 # Comprehensive Test Plan: MICROCODE INSPECTOR
 
-## 1. Testing Philosophy & Non-Negotiable Standards
-To ensure unwavering reliability, hardware safety, and technical transparency, MICROCODE INSPECTOR enforces strict testing disciplines:
+## 1. Testing Philosophy & Verification Standards
+
+To guarantee hardware safety, cryptographic integrity, and technical transparency, MICROCODE INSPECTOR enforces strict testing disciplines:
 1. **Never Falsify Hardware Evidence**: Simulated or mock tests must **never** be reported as physical hardware tests. A physical hardware test is only marked complete when executed against an authentic physical microcontroller and the verification evidence (serial log, chip ID, SHA-256 digest, timestamp) is logged.
 2. **Zero-Destructive API Verification**: Automated test suites must continuously assert that no flash erase, flash write, or fuse modification APIs are invoked.
 3. **100% Deterministic Unit Testing**: Binary parsers, checksum routines, address arithmetic, and Intel HEX converters must be covered with edge-case test vectors including truncated, corrupted, and malformed inputs.
@@ -13,17 +14,17 @@ To ensure unwavering reliability, hardware safety, and technical transparency, M
 ```
                ▲
               / \
-             /   \      Physical Hardware Validation (Manual / Device Bench)
-            /     \     - ESP32 DevKit V1 read-only extraction & app preservation
-           /-------\    - Arduino Uno R3 readback & lock-bit audit
+             /   \      Physical Hardware Bench (Stage 12)
+            /     \     - ESP32 DevKit V1: Read-only dump & sensor app preservation
+           /-------\    - Arduino Uno R3: Signature check, readback & lock audit
           /         \
-         /           \   Mocked Transport & Subprocess Integration Tests
-        /             \  - Mock Web Serial packet streams
+         /           \   Mocked Transport & Subprocess Integration Tests (Stages 3-6)
+        /             \  - Mock Web Serial packet streams & progress updates
        /---------------\ - Mock AVRDUDE subprocess failure/success/timeout
       /                 \
-     /                   \ Unit Tests & Safety Assertions
-    /                     \- Binary parsers (Partition table, ESP image header, HEX)
-   /-----------------------\- Static safety check: ZERO write/erase APIs
+     /                   \ Unit Tests & Static Safety Assertions (Stages 2, 7, 8, 9, 10)
+    /                     \- Binary parsers (Partition table, ESP header, Intel HEX)
+   /-----------------------\- Static safety check: ZERO write/erase APIs in codebase
 ```
 
 ---

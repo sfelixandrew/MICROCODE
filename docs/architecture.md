@@ -1,71 +1,82 @@
 # Architecture Specification: MICROCODE INSPECTOR
 
-## 1. System Overview
+## 1. System Overview & Component-Level Architecture
 
 MICROCODE INSPECTOR is structured as a browser-first, modular embedded reverse-engineering platform. It is engineered with a strict separation of concerns across communication transports, device drivers, binary analysis engines, disassembly modules, and presentation layers.
 
 ```mermaid
 flowchart TD
-    subgraph Browser ["Web Browser (Desktop Chrome / Edge)"]
+    subgraph BrowserClient ["Web Browser (Desktop Chromium: Chrome / Edge)"]
         subgraph UI ["Presentation Layer (Vite + React + TypeScript)"]
-            Dashboard["Inspector Dashboard"]
-            HexViewer["Hex & ASCII Inspection View"]
-            PartitionView["Partition Table & Region Visualizer"]
+            Dashboard["Inspector Dashboard Shell"]
+            DeviceSelector["Device Target & Port Controller"]
+            ProgressBar["Live Progress & Range Reporter"]
+            HexViewer["Virtualized Hex & ASCII Inspector"]
+            PartitionView["Partition Table & Region Map"]
             DisasmView["Architecture Disassembly View"]
             PseudoView["Approximate Logic & Pseudocode View"]
-            AuditReport["Verifiable Audit Report Exporter"]
+            AuditReport["Verifiable Audit Trail & Report Exporter"]
         end
 
         subgraph CoreEngine ["Firmware Processing & Analysis Engine"]
-            IntegrityEngine["Integrity & Hash Engine (SHA-256)"]
+            IntegrityEngine["SHA-256 Cryptographic Hash Engine"]
             PartitionParser["ESP-IDF Partition Table Parser"]
             EspImageParser["ESP Application Image Parser"]
-            AvrMapParser["AVR ATmega328P Memory Map Parser"]
+            AvrMapParser["AVR Memory Map & Vector Parser"]
             SecretDetector["Local Secret Detector & Redactor"]
             DisasmEngine["Architecture Disassembler Dispatcher"]
+            IntelHexEngine["Intel HEX Encoder & Reconstitution"]
         end
 
-        subgraph Drivers ["Device Driver Abstraction Layer"]
+        subgraph DriverLayer ["Device Driver Abstraction Layer"]
             IDriver["IDeviceDriver Interface"]
-            Esp32Driver["ESP32 Driver (esptool-js)"]
+            Esp32Driver["ESP32 Driver (esptool-js Adapter)"]
             UnoDriver["Arduino Uno Driver (Companion Client)"]
         end
 
-        subgraph Transports ["Transport Layer"]
+        subgraph TransportLayer ["Hardware Transport Layer"]
             WebSerial["Web Serial API Transport"]
             CompanionClient["Authenticated Local REST Client"]
         end
     end
 
-    subgraph LocalCompanion ["Local Loopback Helper (127.0.0.1:8765)"]
-        FastAPI["FastAPI Loopback Server"]
-        SecurityLayer["Origin & Session Token Guard"]
-        PortValidator["System Serial Port Enumerator"]
-        AvrdudeSubproc["AVRDUDE CLI Wrapper (Array Args)"]
+    subgraph LocalHost ["Local Host System (127.0.0.1)"]
+        subgraph LocalCompanion ["Local AVR Companion Agent (FastAPI)"]
+            FastAPI["FastAPI Loopback Server (:8765)"]
+            SessionGuard["CSRF & Session Token Validator"]
+            PortEnumerator["System Serial Port Enumerator (pyserial)"]
+            AvrdudeSubproc["AVRDUDE CLI Wrapper (Read-Only Array Args)"]
+        end
+        AvrdudeCLI["Host AVRDUDE Executable"]
     end
 
-    subgraph PhysicalHardware ["Physical USB Devices"]
+    subgraph PhysicalHardware ["Physical USB Microcontrollers"]
         ESP32DevKit["ESP32 DevKit V1 (USB-UART / CP2102 / CH340)"]
         ArduinoUno["Arduino Uno R3 (ATmega328P + 16U2/CH340)"]
     end
 
-    %% Wiring
-    Dashboard --> IDriver
+    %% Wiring UI to Drivers
+    Dashboard --> DeviceSelector
+    DeviceSelector --> IDriver
     IDriver --> Esp32Driver
     IDriver --> UnoDriver
     
+    %% Transport connections
     Esp32Driver --> WebSerial
-    WebSerial -->|Web Serial API / USB CDC| ESP32DevKit
+    WebSerial -->|Web Serial API / Exclusive Port Lock| ESP32DevKit
     
     UnoDriver --> CompanionClient
-    CompanionClient -->|HTTP / Loopback CSRF Protected| FastAPI
-    FastAPI --> SecurityLayer
-    SecurityLayer --> PortValidator
-    PortValidator --> AvrdudeSubproc
-    AvrdudeSubproc -->|STK500v1 / 115200 Baud| ArduinoUno
+    CompanionClient -->|HTTP / X-MicroCode-Session Header| FastAPI
+    FastAPI --> SessionGuard
+    SessionGuard --> PortEnumerator
+    PortEnumerator --> AvrdudeSubproc
+    AvrdudeSubproc --> AvrdudeCLI
+    AvrdudeCLI -->|STK500v1 / 115200 Baud| ArduinoUno
     
+    %% Data Flow to Core Engine
     WebSerial -->|Raw Byte Stream| IntegrityEngine
-    CompanionClient -->|Raw Byte Stream| IntegrityEngine
+    CompanionClient -->|Intel HEX Stream| IntelHexEngine
+    IntelHexEngine -->|Reconstituted Binary| IntegrityEngine
     
     IntegrityEngine --> PartitionParser
     IntegrityEngine --> EspImageParser
@@ -73,10 +84,12 @@ flowchart TD
     IntegrityEngine --> SecretDetector
     IntegrityEngine --> DisasmEngine
 
+    %% Engine to Views
     PartitionParser --> PartitionView
     EspImageParser --> PartitionView
     AvrMapParser --> PartitionView
     IntegrityEngine --> HexViewer
+    SecretDetector --> HexViewer
     DisasmEngine --> DisasmView
     DisasmEngine --> PseudoView
     IntegrityEngine --> AuditReport
@@ -84,119 +97,138 @@ flowchart TD
 
 ---
 
-## 2. Core Architectural Layers
+## 2. Technology & Dependency Decision Record (ADR)
 
-### Layer 1: Hardware Transport Layer
-Abstracts physical byte transport across differing platform APIs:
-- **`WebSerialTransport`**: Communicates directly with USB-to-UART bridges (CP210x, FTDI, CH340) or native USB-Serial/JTAG via the W3C Web Serial API (`navigator.serial`).
-- **`CompanionHttpTransport`**: Interfaces with the local loopback agent for microcontrollers requiring external host utilities (e.g., AVRDUDE for Arduino Uno).
+| Component | Selected Technology | Alternative Evaluated | Decision Rationale |
+| :--- | :--- | :--- | :--- |
+| **Frontend Framework** | **React 19 + TypeScript** | Vanilla JS / Svelte | Multi-region state, virtualized hex grids, multi-tab binary views, and strict typing of binary bitfields necessitate declarative components and compile-time type safety. |
+| **Bundler & Build Tool**| **Vite 6** | Webpack / Parcel | Instant HMR, native ES modules, lightweight configuration, and direct compatibility with Web Serial and Web Workers. |
+| **Test Runner** | **Vitest 3** | Jest / Mocha | Native Vite pipeline integration, blazing-fast execution, TypeScript support without Babel overhead, and node-compatible Web Crypto mocks. |
+| **ESP32 Communication**| **esptool-js (0.7.1)** | Custom Web Serial ROM implementation | Official Espressif library containing validated ROM reset sequences, software stub flasher, chip magic detection, and SPI Flash ID decoding. |
+| **AVR Extraction Method**| **Local Python Helper + AVRDUDE** | In-browser Web Serial STK500v1 | Optiboot DTR/RTS auto-reset timing over Web Serial in JavaScript is unreliable across varied host OS drivers. Native AVRDUDE provides battle-tested STK500v1 protocol implementation and precise DTR pulse handling. |
+| **Companion Server** | **FastAPI + Uvicorn** | Node.js Express / Go binary | Python provides lightweight syntax, built-in subprocess management, `pyserial` hardware device enumeration, and clean type annotations via Pydantic. |
+| **Integrity Hashing** | **Web Crypto API (`crypto.subtle`)** | CryptoJS / js-sha256 | Native hardware-accelerated SHA-256 implementation available in modern browsers without third-party bundle bloat. |
+| **Styling & UI Shell** | **Scoped Modern CSS** | Tailwind CSS / Bootstrap | Zero dependency runtime footprint, high contrast dark theme optimized for technical binary inspection, and predictable rendering without external CDN lookups. |
 
-### Layer 2: Device Driver Interface (`IDeviceDriver`)
-All microcontrollers implement a uniform lifecycle interface:
-```typescript
-export interface DeviceIdentity {
-  family: 'ESP32' | 'AVR_ATMEGA';
-  model: string;                // e.g., "ESP32 (revision v3.0)", "ATmega328P"
-  architecture: 'xtensa-lx6' | 'xtensa-lx7' | 'riscv32' | 'avr8' | 'unknown';
-  detectedFlashBytes: number | null;
-  securityFeatures: {
-    flashEncryption: 'disabled' | 'enabled' | 'unknown';
-    secureBoot: 'disabled' | 'enabled' | 'unknown';
-    lockBitsHex?: string;
-  };
-}
+---
 
-export interface MemoryRegion {
-  name: string;
-  startAddress: number;
-  sizeBytes: number;
-  type: 'bootloader' | 'partition_table' | 'app' | 'data' | 'nvs' | 'eeprom' | 'padding' | 'unknown';
-  isReadable: boolean;
-}
+## 3. Data-Flow Diagram: ESP32 Firmware Extraction
 
-export interface IDeviceDriver {
-  connect(portHint?: any): Promise<DeviceIdentity>;
-  detectCapacity(): Promise<number>;
-  getMemoryMap(): Promise<MemoryRegion[]>;
-  readRegion(startAddress: number, sizeBytes: number, onProgress?: (bytesRead: number, total: number) => void): Promise<Uint8Array>;
-  resetToNormalBoot(): Promise<void>;
-  disconnect(): Promise<void>;
-}
+The ESP32 extraction pipeline operates entirely browser-side over the W3C Web Serial API:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as Dashboard UI
+    participant Driver as Esp32Driver
+    participant Transport as WebSerial Transport
+    participant Loader as esptool-js ESPLoader
+    participant Chip as Physical ESP32 DevKit V1
+    participant Integrity as Integrity Engine (SHA-256)
+    participant Parsers as Partition & Image Parsers
+
+    User->>UI: Select ESP32 & Click "Connect"
+    UI->>Driver: connect()
+    Driver->>Transport: navigator.serial.requestPort()
+    Transport->>User: Browser Port Picker Dialog
+    User->>Transport: Selects USB Serial Port (e.g. CP2102)
+    Transport->>Chip: Open port (115200 baud)
+    Driver->>Loader: ESPLoader.main()
+    Loader->>Chip: DTR/RTS Reset Sequence into ROM Bootloader
+    Note over Chip: Microcontroller enters ROM bootloader mode
+    Chip-->>Loader: Sync response packet
+    Loader->>Chip: Upload & Execute Flasher Stub in IRAM
+    Chip-->>Loader: Stub active confirmation
+    Loader->>Driver: Chip identified (e.g. "ESP32 (revision v3.0)")
+    
+    Driver->>Loader: getSecurityInfo()
+    Loader->>Chip: Opcode 0x14 (GET_SECURITY_INFO)
+    Chip-->>Loader: Flash Crypt Count & Secure Download flags
+    
+    Driver->>Loader: detectFlashSize()
+    Loader->>Chip: Read SPI Flash RDID (Opcode 0x9F)
+    Chip-->>Loader: Flash ID -> Mapped size (e.g. 4 MB / 4,194,304 bytes)
+    Driver-->>UI: Display chip identity, security flags, & detected Flash size
+    
+    User->>UI: Click "Read Flash"
+    UI->>Driver: readRegion(0x0, 4194304)
+    loop Stream in 64 KiB Chunks
+        Driver->>Loader: readFlash(offset, length)
+        Loader->>Chip: ESP_READ_FLASH packets
+        Chip-->>Loader: Raw Flash Byte Packets
+        Loader-->>Driver: Chunk Uint8Array
+        Driver-->>UI: Progress (offset, range, percentage)
+    end
+    
+    Driver->>Integrity: computeDigest(rawBytes)
+    Integrity-->>Driver: SHA-256 Digest Hex
+    
+    Driver->>Loader: after("hard_reset")
+    Loader->>Chip: Pulse EN/RTS to reboot chip
+    Note over Chip: Microcontroller resumes normal user application
+    
+    Driver->>Parsers: parsePartitionTable(rawBytes)
+    Parsers-->>UI: Partitions (nvs, otadata, app, spiffs)
+    Driver->>Parsers: parseAppHeader(rawBytes)
+    Parsers-->>UI: App image metadata, entry point, segments
+    Driver-->>UI: Update Hex View, Statistics, and Enable Verified Download
 ```
 
-### Layer 3: Integrity & Memory Extraction Engine
-- **Chunked Safe Streaming**: Memory reads are divided into verified chunks (typically 4 KiB - 64 KiB) with continuous progress reporting and address verification.
-- **Immediate SHA-256 Hashing**: A cryptographic digest is computed immediately over captured memory blocks using Web Crypto API (`crypto.subtle.digest("SHA-256", ...)`).
-- **Format Encoders**: Converts raw bytes into Intel HEX (`.hex`) and raw binary (`.bin`) with round-trip checksum validation.
+---
 
-### Layer 4: Binary & Partition Parsing Engine
-- **ESP-IDF Partition Table Parser**:
-  - Locates partition table at offset `0x8000` (or legacy/custom `0x9000`).
-  - Validates partition entry magic bytes (`0xAA 0x50`).
-  - Extracts partition type (App `0x00`, Data `0x01`), subtype (factory, ota_0..15, nvs, spiffs, fat), label, offset, length, and encryption flags.
-- **ESP Application Image Header Parser**:
-  - Parses the 24-byte ESP image header:
-    - Magic byte: `0xE9`
-    - Segment count (1..16)
-    - SPI mode (QIO, QOUT, DIO, DOUT)
-    - SPI speed (40MHz, 80MHz, etc.)
-    - SPI size (1MB, 2MB, 4MB, 8MB, 16MB)
-    - Entry point address (e.g. `0x40080698` in IRAM)
-  - Iterates segments: load address, data length, payload bytes.
-  - Checks for trailing SHA-256 hash append (ESP32-S2/S3/C3 and newer ESP-IDF v3.0+ builds).
-- **AVR Memory Map Parser**:
-  - Standard ATmega328P Flash layout (32 KiB / 32,768 bytes).
-  - Reset vector (`0x0000`) and 25 interrupt vectors (`0x0002` through `0x0032`).
-  - Delineates application space (`0x0000` to `0x7DFF` or `0x7FFF`) from Optiboot bootloader space (`0x7E00` to `0x7FFF`, 512 bytes).
-  - Explicitly detects and tags unprogrammed Flash blocks (`0xFF` sequences).
+## 4. Data-Flow Diagram: Arduino Uno (AVR) Extraction
 
-### Layer 5: Architecture-Specific Disassembly Engine
-- **Xtensa LX6 Disassembler**: Decodes 24-bit standard and 16-bit narrow instructions for ESP32. Resolves program counter relative calls (`CALL0`, `CALL4`, `CALL8`, `CALL12`), literal load pools (`L32R`), branch targets, and known ESP-IDF ROM vector addresses.
-- **AVR 8-bit Disassembler**: Decodes 16-bit and 32-bit AVR instructions (`RJMP`, `CALL`, `RCALL`, `LDI`, `IN`, `OUT`, `SBI`, `CBI`, `LDS`, `STS`). Maps I/O ports (`0x00` - `0x3F`) to ATmega328P hardware registers (`PORTB`, `DDRB`, `PINB`, `UDR0`, `UCSR0A`, `ADCSRA`, `ADMUX`, `TCCR1A`, etc.).
-- **Boundary Enforcement**: Disassembly is only allowed when base load addresses and architecture are unequivocally known. Disassembly never modifies source bytes.
+The Arduino Uno pipeline leverages the hardened local loopback companion to drive AVRDUDE:
 
-### Layer 6: Heuristic Pseudocode & Logic Explanation Engine
-- Reconstructs higher-level control flow graphs (loops, conditional branches, switch tables).
-- Identifies standard initialization patterns (UART setup, GPIO pin direction configuration, SPI/I2C transactions, timer interrupts).
-- **Uncertainty Transparency**:
-  - Marks inferred variables as hypotheses: `unknown_var_001`, `inferred_loop_counter`.
-  - Flags confidence ratings: `HIGH (Direct register mapping)`, `MEDIUM (Structural control flow match)`, `LOW (Heuristic pattern match)`.
-  - Displays prominent disclaimers that output is an approximate synthetic representation, not original source code.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as Dashboard UI
+    participant UnoDriver as ArduinoUnoDriver
+    participant Companion as Local Companion (127.0.0.1:8765)
+    participant Avrdude as AVRDUDE CLI
+    participant Uno as Physical Arduino Uno (ATmega328P)
+    participant Reconstitution as Reconstitution & Integrity Engine
 
-### Layer 7: UI & User Experience
-- Built with React 19, TypeScript, and modern CSS modules/Tailwind.
-- High performance virtualized hex viewer supporting Multi-Megabyte images without browser DOM lag.
-- Live progress indicator with address range reporting (`0x00001000 - 0x00002000`).
-- Local redactor for secrets: scans for private keys, AWS/cloud tokens, Wi-Fi passwords, and certificates, redacting them before display in logs or reports unless explicitly toggled by user.
+    User->>UI: Select Arduino Uno & Click "Query Ports"
+    UI->>UnoDriver: getAvailablePorts()
+    UnoDriver->>Companion: GET /ports (Header: X-MicroCode-Session)
+    Companion-->>UnoDriver: Enumerated physical COM ports (e.g. ["COM5"])
+    UnoDriver-->>UI: Populate Port Dropdown
+
+    User->>UI: Select "COM5" & Click "Read Flash"
+    UI->>UnoDriver: readFlash("COM5")
+    UnoDriver->>Companion: POST /read/uno { port: "COM5", baud: 115200 }
+    
+    Note over Companion: Validate Origin & Session Token
+    Note over Companion: Verify "COM5" exists in enumerated physical ports
+    
+    Companion->>Avrdude: subprocess.run(["avrdude", "-p", "atmega328p", "-c", "arduino", "-P", "COM5", "-b", "115200", "-U", "lock:r:...:h", "-U", "flash:r:...:i"])
+    Avrdude->>Uno: Toggle DTR to enter Optiboot
+    Note over Uno: Microcontroller enters Optiboot bootloader
+    Avrdude->>Uno: STK_GET_SYNC & Signature query
+    Uno-->>Avrdude: Signature 0x1E 0x95 0x0F (ATmega328P)
+    Avrdude->>Uno: STK_READ_PAGE (Flash pages 0x0000 - 0x7FFF)
+    Uno-->>Avrdude: Flash bytes (32 KiB)
+    Avrdude-->>Companion: Intel HEX file + Lock bits
+    
+    Companion-->>UnoDriver: JSON { hexRecords: "...", lockBits: "0x3F", signature: "0x1E950F" }
+    
+    UnoDriver->>Reconstitution: parseAndReconstitute(hexRecords, 32768)
+    Note over Reconstitution: Reconstruct 32 KiB buffer; tag unwritten trailing bytes as ERASED (0xFF)
+    Reconstitution->>Reconstitution: Calculate SHA-256
+    Reconstitution-->>UnoDriver: Verifiable 32 KiB Dump + SHA-256
+    
+    UnoDriver-->>UI: Display Memory Map (Vectors, App, Bootloader), Hex, and Verified Download
+```
 
 ---
 
-## 3. Local AVR Companion Agent Architecture
+## 5. Architectural Security Boundaries
 
-For hardware requiring native tooling (Arduino Uno with AVRDUDE):
-- **Server**: FastAPI running exclusively on `http://127.0.0.1:8765`.
-- **Security & Authorization**:
-  - Validates `Origin` matches browser frontend (`http://localhost:5173`, `http://127.0.0.1:5173`).
-  - Generates ephemeral local session token during companion launch; client must present token in header `X-MicroCode-Session`.
-  - Only accepts ports verified against active hardware serial ports (`serial.tools.list_ports`).
-  - Strict input sanitization rejecting shell metacharacters.
-  - Subprocess executed exclusively with argument vectors:
-    ```python
-    subprocess.run(
-        ["avrdude", "-p", "atmega328p", "-c", "arduino", "-P", validated_port, "-b", "115200", "-U", f"flash:r:{temp_hex}:i"],
-        capture_output=True,
-        text=True,
-        timeout=60
-    )
-    ```
-  - Strictly read-only operations (`-U flash:r:...` / `-U lock:r:...`). Never write or chip-erase.
-
----
-
-## 4. Migration Rationale: Prototype v0.1.1 to Production Scaffold
-
-The starter scaffold (`MicroCode_Inspector_v0.1.1`) verified basic Web Serial connection with vanilla JS and a single `agent/main.py`. However, production requirements necessitate migration to Vite + React + TypeScript:
-1. **Type Safety**: Parsing binary headers, bitfields, partition records, and Xtensa/AVR instruction encodings in vanilla JavaScript is error-prone. TypeScript provides compile-time protection against offset and type errors.
-2. **State Complexity**: Managing multi-stage connection states, progress callbacks, multi-region memory buffers, virtualized hex viewing, and disassembly panes requires declarative component state management.
-3. **Automated Testing**: TypeScript enables unit testing of all parsers and drivers with Vitest and mocked serial streams without requiring physical hardware.
-4. **Preservation**: The v0.1.1 prototype remains intact in `MicroCode_Inspector_v0.1.1/` as an audited reference, while the production codebase is structured cleanly in `src/` and `agent/`.
+1. **Client Isolation**: The browser frontend runs strictly client-side. No remote cloud endpoints, analytics, or telemetry exist.
+2. **Loopback Protection**: The Python companion binds exclusively to `127.0.0.1`. Requests require validation of the `Origin` header against `http://localhost:5173` and the presence of an ephemeral `X-MicroCode-Session` token generated at companion boot.
+3. **Serial Argument Whitelisting**: Subprocess calls avoid `shell=True`. Ports are cross-referenced with `serial.tools.list_ports.comports()`, rejecting arbitrary device paths or injected characters.
+4. **Strict Read-Only Enforcement**: Neither the TypeScript codebase nor the Python companion contains routines or command flags for flash writing (`:w:`), flash erasing (`eraseFlash`, `eraseRegion`), or chip erasure (`-e`).

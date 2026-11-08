@@ -39,11 +39,11 @@ MICROCODE INSPECTOR is built with a strict **Read-Only** security foundation:
 
 For in-depth technical disclosures, consult:
 - [`AGENTS.md`](./AGENTS.md): Permanent architectural and safety rules.
-- [`docs/architecture.md`](./docs/architecture.md): Layered architecture and driver abstraction.
-- [`docs/limitations.md`](./docs/limitations.md): Boundary disclosures and physics of embedded reverse engineering.
-- [`docs/threat-model.md`](./docs/threat-model.md): Threat vectors (STRIDE) and security controls.
-- [`docs/test-plan.md`](./docs/test-plan.md): Automated test suites and hardware bench protocols.
-- [`docs/progress.md`](./docs/progress.md): Stage-by-stage implementation and hardware audit trail.
+- [`docs/architecture.md`](./docs/architecture.md): Component architecture, technology decision record, and extraction data-flow diagrams.
+- [`docs/limitations.md`](./docs/limitations.md): Boundary disclosures, Optiboot STK_READ_PAGE realities, and compilation physics.
+- [`docs/threat-model.md`](./docs/threat-model.md): Threat vectors (STRIDE), trust boundaries, and security controls.
+- [`docs/test-plan.md`](./docs/test-plan.md): Automated test suites, static safety assertions, and device bench protocols.
+- [`docs/progress.md`](./docs/progress.md): 12-stage implementation plan, acceptance gates, and claims verification matrix.
 
 ---
 
@@ -54,9 +54,9 @@ For in-depth technical disclosures, consult:
 ├── AGENTS.md                   # Permanent project and safety rules
 ├── README.md                   # Project overview and quick start
 ├── docs/                       # Technical specifications & audit logs
-│   ├── architecture.md         # Component diagrams & driver models
+│   ├── architecture.md         # Component diagrams & data flows
 │   ├── limitations.md          # Compilation realities & boundary disclosures
-│   ├── progress.md             # Stage gate status & physical hardware log
+│   ├── progress.md             # 12-stage roadmap & claims verification matrix
 │   ├── test-plan.md            # Test suites & device bench protocols
 │   └── threat-model.md         # STRIDE threat model & mitigations
 └── MicroCode_Inspector_v0.1.1/ # Audited v0.1 prototype reference
@@ -66,13 +66,17 @@ For in-depth technical disclosures, consult:
 
 ---
 
-## 🚀 Development Roadmap
+## 🚀 12-Stage Implementation Roadmap
 
 - **Stage 1 (Current)**: Repository Audit, Official Documentation Verification, System Architecture & Threat Model, Permanent AGENTS.md Rules.
-- **Stage 2**: Production Scaffold Migration (Vite + React + TypeScript), Domain Models, & Test Harness.
-- **Stage 3**: ESP32 Read-Only Driver with Runtime Detection, Chunked Streaming, & Safe Reset.
-- **Stage 4**: Secure Python Companion Agent with Session CSRF, Port Whitelisting, & AVRDUDE Read-Only Driver.
-- **Stage 5**: Binary Parsers (ESP-IDF Partition Table, ESP Image Header, Intel HEX Roundtrip) & SHA-256 Engine.
-- **Stage 6**: Architecture Disassemblers (Xtensa LX6 & AVR) and Heuristic Pseudocode Engine with Uncertainty Flags.
-- **Stage 7**: Production Web UI (Virtualized Hex Viewer, Secrets Redactor, Visual Partition Map, Audit Exporter).
-- **Stage 8**: Physical Hardware Verification Bench (ESP32 DevKit V1 & Arduino Uno) & Final Release.
+- **Stage 2**: Production TypeScript Scaffold, Domain Models & Test Runner.
+- **Stage 3**: ESP32 Hardware Transport & Chip Detection Driver.
+- **Stage 4**: ESP32 Non-Destructive Flash Extraction Engine.
+- **Stage 5**: Hardened Local AVR Companion Agent.
+- **Stage 6**: Arduino Uno / AVR Driver & Extraction Engine.
+- **Stage 7**: Binary & Partition Parsers.
+- **Stage 8**: Virtualized Hex & ASCII Inspection Engine.
+- **Stage 9**: Local Secret Scanner & Redactor.
+- **Stage 10**: Architecture Disassembly Adapters (Xtensa LX6 & AVR).
+- **Stage 11**: Heuristic Pseudocode & Logic Explanation Engine.
+- **Stage 12**: End-to-End Hardware Validation Bench (ESP32 DevKit V1 Sensor App Preservation & Arduino Uno R3).
