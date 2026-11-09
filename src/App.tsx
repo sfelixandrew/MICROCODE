@@ -4,19 +4,24 @@ import {
   Cpu,
   HardDrive,
   Terminal,
+  Download,
   AlertTriangle,
   RefreshCw,
   PowerOff,
   Radio,
   Lock,
   Info,
-  Sliders,
+  CheckCircle2,
+  XCircle,
+  FileCheck,
+  StopCircle,
 } from 'lucide-react';
 import { MockDeviceAdapter } from './device/MockDeviceAdapter.ts';
 import { Esp32Adapter, MANUAL_BOOT_GUIDANCE } from './device/esp32/Esp32Adapter.ts';
 import { ConnectionState, DeviceIdentity, DeviceError, DeviceAdapter } from './device/types.ts';
 import { detectBrowserCapabilities, BrowserCapabilityReport } from './device/capabilities.ts';
 import { formatHexAddress, formatByteSize } from './utils/address.ts';
+import { Esp32FlashExtractor, ExtractionOutcome, ExtractionProgressUpdate } from './extraction/esp32/Esp32FlashExtractor.ts';
 
 type AnalysisTab = 'overview' | 'memory_map' | 'hex_bin' | 'strings' | 'assembly' | 'pseudocode' | 'report';
 
@@ -31,12 +36,21 @@ export const App: React.FC = () => {
   const [useLiveHardware, setUseLiveHardware] = useState<boolean>(true);
   const [baudRate, setBaudRate] = useState<number>(115200);
 
+  // Extraction Engine State
+  const [testSliceOutcome, setTestSliceOutcome] = useState<ExtractionOutcome | null>(null);
+  const [extractionOutcome, setExtractionOutcome] = useState<ExtractionOutcome | null>(null);
+  const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [isTestSliceRunning, setIsTestSliceRunning] = useState<boolean>(false);
+  const [progress, setProgress] = useState<ExtractionProgressUpdate | null>(null);
+  const [unmaskSecrets, setUnmaskSecrets] = useState<boolean>(false);
+
   const [logs, setLogs] = useState<Array<{ id: string; time: string; cat: string; msg: string }>>([
-    { id: '1', time: new Date().toLocaleTimeString(), cat: 'SYSTEM', msg: 'MICROCODE INSPECTOR initialized in Stage 4 ESP32 Detection mode.' },
+    { id: '1', time: new Date().toLocaleTimeString(), cat: 'SYSTEM', msg: 'MICROCODE INSPECTOR initialized in Stage 5 Read-Only Extraction mode.' },
     { id: '2', time: new Date().toLocaleTimeString(), cat: 'SECURITY', msg: 'Strict Read-Only mode active. Zero write/erase APIs compiled.' },
   ]);
 
   const adapterRef = useRef<DeviceAdapter | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const addLog = (cat: string, msg: string) => {
     setLogs((prev) => [
@@ -45,7 +59,6 @@ export const App: React.FC = () => {
     ]);
   };
 
-  // Check browser capabilities on mount
   useEffect(() => {
     const caps = detectBrowserCapabilities();
     setBrowserCaps(caps);
@@ -57,8 +70,10 @@ export const App: React.FC = () => {
 
   const handleConnect = async () => {
     setDeviceError(null);
+    setTestSliceOutcome(null);
+    setExtractionOutcome(null);
+    setProgress(null);
 
-    // Create adapter based on target and mode
     let adapter: DeviceAdapter;
     if (selectedTarget === 'ESP32' && useLiveHardware && browserCaps?.isSupported) {
       adapter = new Esp32Adapter({
@@ -66,26 +81,24 @@ export const App: React.FC = () => {
         logger: (msg, level) => addLog(level ? level.toUpperCase() : 'ESP32', msg),
       });
     } else {
-      adapter = new MockDeviceAdapter({
-        latencyMs: 150,
-      });
-      addLog('DEVICE', 'Using Mock Hardware Test Adapter for simulated evaluation.');
+      adapter = new MockDeviceAdapter({ latencyMs: 100 });
+      addLog('DEVICE', 'Using Mock Hardware Test Adapter for simulated extraction evaluation.');
     }
 
     adapterRef.current = adapter;
 
-    const unsubState = adapter.onStateChange((state, prev) => {
+    adapter.onStateChange((state, prev) => {
       setConnectionState(state);
       addLog('STATE', `Lifecycle transition: ${prev} -> ${state}`);
     });
 
-    const unsubError = adapter.onError((err: DeviceError) => {
+    adapter.onError((err: DeviceError) => {
       setDeviceError(`[${err.code}] ${err.message}`);
       addLog('ERROR', `Device error: ${err.message}`);
     });
 
     try {
-      addLog('DEVICE', `Initiating connection for target: ${selectedTarget}...`);
+      addLog('DEVICE', `Connecting to target: ${selectedTarget}...`);
       await adapter.requestPortAndConnect();
       addLog('DEVICE', 'Port opened. Synchronizing with bootloader & querying chip ID...');
       const identity = await adapter.identifyDevice();
@@ -94,15 +107,16 @@ export const App: React.FC = () => {
     } catch (err: any) {
       setDeviceError(err.message || 'Connection failed.');
       addLog('ERROR', `Connection failed: ${err.message}`);
-    } finally {
-      // Retain subscription cleanup when unmounted
     }
   };
 
   const handleDisconnect = async () => {
     if (!adapterRef.current) return;
     try {
-      addLog('DEVICE', 'Disconnecting: issuing safe hard-reset into normal user boot...');
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      addLog('DEVICE', 'Disconnecting: issuing safe hard-reset to return board to normal boot...');
       const res = await adapterRef.current.disconnect();
       setDeviceIdentity(null);
       addLog('DEVICE', res.message);
@@ -110,7 +124,153 @@ export const App: React.FC = () => {
       addLog('ERROR', `Disconnect error: ${err.message}`);
     } finally {
       adapterRef.current = null;
+      setIsExtracting(false);
+      setIsTestSliceRunning(false);
     }
+  };
+
+  // Step 1: Run non-destructive test slice
+  const handleTestSlice = async () => {
+    if (!deviceIdentity) return;
+    setIsTestSliceRunning(true);
+    setDeviceError(null);
+    addLog('EXTRACTION', 'Executing user-approved test slice read (4 KiB at 0x1000)...');
+
+    try {
+      let outcome: ExtractionOutcome;
+      if (adapterRef.current instanceof Esp32Adapter) {
+        const loader = (adapterRef.current as any)._loader;
+        outcome = await Esp32FlashExtractor.executeTestSlice(loader, 0x1000, 4096);
+      } else {
+        // Mock execution
+        const mockBytes = new Uint8Array(4096);
+        mockBytes[0] = 0xE9; // Simulated ESP Image Magic
+        mockBytes.fill(0x33, 1);
+        outcome = {
+          status: 'completed',
+          startAddress: 0x1000,
+          bytesRequested: 4096,
+          bytesRead: 4096,
+          rawBytes: mockBytes,
+          sha256Hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+          readability: {
+            status: 'readable',
+            entropy: 4.82,
+            hasValidAppHeader: true,
+            hasValidPartitionTable: false,
+            detectedSignatures: ['ESP_IMAGE_MAGIC (0xE9 at 0x1000)'],
+            explanation: 'Standard ESP image header identified at 0x1000. Firmware is readable plaintext.',
+          },
+          elapsedMs: 85,
+          isVerifiedExact: true,
+        };
+      }
+
+      setTestSliceOutcome(outcome);
+      addLog('EXTRACTION', `Test slice succeeded! SHA-256: ${outcome.sha256Hash.substring(0, 16)}... | Readability: ${outcome.readability.status.toUpperCase()}`);
+    } catch (err: any) {
+      setDeviceError(`Test slice failed: ${err.message}`);
+      addLog('ERROR', `Test slice error: ${err.message}`);
+    } finally {
+      setIsTestSliceRunning(false);
+    }
+  };
+
+  // Step 2: Run full flash extraction
+  const handleFullExtraction = async () => {
+    if (!deviceIdentity || !deviceIdentity.flashInfo.totalBytes) return;
+    setIsExtracting(true);
+    setDeviceError(null);
+    setProgress(null);
+
+    const totalBytes = deviceIdentity.flashInfo.totalBytes;
+    const plan = Esp32FlashExtractor.calculatePlan(0x0, totalBytes, totalBytes, 65536);
+    addLog('EXTRACTION', `Starting full Flash extraction: ${plan.totalBytes.toLocaleString('en-US')} bytes (${plan.totalChunks} chunks of 64 KiB)...`);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      let outcome: ExtractionOutcome;
+      if (adapterRef.current instanceof Esp32Adapter) {
+        const loader = (adapterRef.current as any)._loader;
+        outcome = await Esp32FlashExtractor.executeExtraction(loader, plan, {
+          abortSignal: controller.signal,
+          onProgress: (p) => setProgress(p),
+        });
+      } else {
+        // Mock extraction with live progress simulation
+        const mockBuffer = new Uint8Array(totalBytes);
+        for (let i = 0; i < plan.totalChunks; i++) {
+          if (controller.signal.aborted) break;
+          const bytesRead = Math.min((i + 1) * plan.chunkSize, totalBytes);
+          setProgress({
+            currentAddress: bytesRead,
+            startAddress: 0,
+            totalBytes,
+            bytesRead,
+            percentage: Math.round((bytesRead / totalBytes) * 100),
+            currentChunkIndex: i + 1,
+            totalChunks: plan.totalChunks,
+            speedBytesPerSec: 180000,
+            elapsedMs: (i + 1) * 30,
+          });
+          await new Promise((r) => setTimeout(r, 25));
+        }
+
+        outcome = {
+          status: controller.signal.aborted ? 'cancelled' : 'completed',
+          startAddress: 0,
+          bytesRequested: totalBytes,
+          bytesRead: controller.signal.aborted ? Math.round(totalBytes / 2) : totalBytes,
+          rawBytes: mockBuffer,
+          sha256Hash: '9a27e7f677d242c16f2bfa518f8dc6d88b4887b4f5352c6f11cb73b3131e508f',
+          readability: {
+            status: 'readable',
+            entropy: 5.12,
+            hasValidAppHeader: true,
+            hasValidPartitionTable: true,
+            detectedSignatures: ['ESP_IMAGE_MAGIC (0xE9 at 0x1000)', 'PARTITION_TABLE_MAGIC (0xAA50 at 0x8000)'],
+            explanation: 'Verified readable plaintext firmware dump with valid headers.',
+          },
+          elapsedMs: 1200,
+          isVerifiedExact: true,
+        };
+      }
+
+      setExtractionOutcome(outcome);
+      addLog('EXTRACTION', `Extraction outcome: ${outcome.status.toUpperCase()} (${outcome.bytesRead.toLocaleString('en-US')} bytes). SHA-256: ${outcome.sha256Hash}`);
+    } catch (err: any) {
+      setDeviceError(`Extraction error: ${err.message}`);
+      addLog('ERROR', `Extraction error: ${err.message}`);
+    } finally {
+      setIsExtracting(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancelExtraction = () => {
+    if (abortControllerRef.current) {
+      addLog('EXTRACTION', 'User requested extraction cancellation. Halting and preserving captured bytes...');
+      abortControllerRef.current.abort();
+    }
+  };
+
+  const handleDownloadBin = () => {
+    const outcome = extractionOutcome || testSliceOutcome;
+    if (!outcome) return;
+
+    const blob = new Blob([outcome.rawBytes], { type: 'application/octet-stream' });
+    const filename = `${deviceIdentity?.model.replace(/[^a-zA-Z0-9_-]/g, '_') || 'esp32'}_flash_${outcome.status === 'completed' ? 'full' : 'partial'}_${outcome.bytesRead}_bytes.bin`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    addLog('EXPORT', `Exported verified binary dump: ${filename} (SHA-256: ${outcome.sha256Hash})`);
   };
 
   const isConnected = connectionState === 'connected';
@@ -119,7 +279,11 @@ export const App: React.FC = () => {
     connectionState === 'requesting_permission' ||
     connectionState === 'identifying' ||
     connectionState === 'reading' ||
-    connectionState === 'disconnecting';
+    connectionState === 'disconnecting' ||
+    isExtracting ||
+    isTestSliceRunning;
+
+  const activeDisplayOutcome = extractionOutcome || testSliceOutcome;
 
   return (
     <div className="app-layout">
@@ -133,7 +297,7 @@ export const App: React.FC = () => {
           <span className="badge badge-readonly" title="All firmware write and erase operations are physically banned">
             <Lock size={12} aria-hidden="true" /> Strict Read-Only
           </span>
-          <span className="badge badge-stage">Stage 4: ESP32 Adapter Ready</span>
+          <span className="badge badge-stage">Stage 5: Read-Only Extractor Ready</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -168,21 +332,13 @@ export const App: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <AlertTriangle size={18} color="#f59e0b" aria-hidden="true" />
           <span>
-            <strong>Execution Interruption Warning:</strong> Entering bootloader mode resets the microcontroller and temporarily halts running firmware. The board will be reset to normal boot on disconnect. The tool does <strong>NOT</strong> write or erase Flash.
+            <strong>Sensor Application Preservation Notice:</strong> Entering bootloader mode resets the microcontroller and temporarily halts running firmware. The board will be reset to normal boot on disconnect. The tool does <strong>NOT</strong> write or erase Flash.
           </span>
         </div>
         <span className="badge badge-stage">
           {useLiveHardware ? 'Physical Web Serial' : 'Mock Harness'}
         </span>
       </section>
-
-      {/* Browser Capability Alert if Web Serial is unsupported */}
-      {browserCaps && !browserCaps.isSupported && (
-        <div style={{ background: '#3b82f615', borderBottom: '1px solid #3b82f640', padding: '8px 24px', fontSize: '12px', color: '#93c5fd' }}>
-          <Info size={14} style={{ display: 'inline', marginRight: '6px' }} />
-          {browserCaps.limitationReason}
-        </div>
-      )}
 
       {/* Main Dashboard Layout */}
       <main className="dashboard-container" role="main">
@@ -217,15 +373,13 @@ export const App: React.FC = () => {
                 disabled={isBusy || isConnected}
               >
                 <div className="device-btn-title">Arduino Uno R3</div>
-                <div className="device-btn-sub">Local AVR Companion (Stage 5)</div>
+                <div className="device-btn-sub">Local AVR Companion (Stage 6)</div>
               </button>
             </div>
 
             {/* Baud rate configuration */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sliders size={13} aria-hidden="true" /> Initial Baud Rate:
-              </span>
+              <span>Initial Baud Rate:</span>
               <select
                 value={baudRate}
                 onChange={(e) => setBaudRate(Number(e.target.value))}
@@ -325,16 +479,16 @@ export const App: React.FC = () => {
               </div>
             ) : (
               <div style={{ padding: '30px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
-                No device connected. Click &quot;Connect Serial Device&quot; to prompt Web Serial selection.
+                No device connected. Click &quot;Connect Serial Device&quot; to begin.
               </div>
             )}
           </section>
         </div>
 
-        {/* Extraction Control & Progress Workspace (Deferred to Stage 5) */}
+        {/* Extraction Control & Progress Workspace */}
         <section className="card" aria-labelledby="extraction-workspace-heading">
           <div className="card-title">
-            <span id="extraction-workspace-heading">Firmware Extraction Workspace</span>
+            <span id="extraction-workspace-heading">Stage 5: ESP32 Read-Only Flash Extraction</span>
             <HardDrive size={16} color="#94a3b8" aria-hidden="true" />
           </div>
 
@@ -359,26 +513,89 @@ export const App: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button type="button" className="btn-secondary" disabled title="Extraction engine scheduled for next stage">
-                Read Test Slice (Stage 5)
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleTestSlice}
+                disabled={!isConnected || isExtracting || isTestSliceRunning}
+                title="Perform small non-destructive 4 KiB read at 0x1000 before full extraction"
+              >
+                {isTestSliceRunning ? 'Reading Test Slice...' : 'Step 1: Test Slice (4 KiB)'}
               </button>
-              <button type="button" className="btn-primary" disabled title="Extraction engine scheduled for next stage">
-                Read Full Flash Dump (Stage 5)
-              </button>
+
+              {!isExtracting ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleFullExtraction}
+                  disabled={!isConnected || !deviceIdentity?.flashInfo.totalBytes || isTestSliceRunning}
+                  title="Read full accessible Flash memory using bounded 64 KiB chunks"
+                >
+                  Step 2: Read Full Flash Dump
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={handleCancelExtraction}
+                  style={{ borderColor: '#f59e0b80', color: '#fbbf24' }}
+                >
+                  <StopCircle size={15} aria-hidden="true" /> Cancel Extraction
+                </button>
+              )}
             </div>
           </div>
 
+          {/* Progress Bar & Range Reporting */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-              <span>Extraction Engine Status</span>
+              <span>
+                {progress
+                  ? `Reading: ${formatHexAddress(progress.currentAddress)} / ${formatHexAddress(progress.totalBytes)} (${progress.currentChunkIndex}/${progress.totalChunks} chunks)`
+                  : extractionOutcome
+                  ? `Extraction ${extractionOutcome.status.toUpperCase()} (${extractionOutcome.bytesRead.toLocaleString('en-US')} bytes)`
+                  : isConnected
+                  ? 'Ready for extraction (Run Step 1 Test Slice first)'
+                  : 'Device Disconnected'}
+              </span>
               <span style={{ fontFamily: 'var(--font-mono)' }}>
-                {isConnected ? 'Chip Identified — Ready for Extraction (Stage 5)' : 'Device Disconnected'}
+                {progress ? `${progress.percentage}%` : extractionOutcome ? '100%' : '0%'}
               </span>
             </div>
-            <div className="progress-bar-container" role="progressbar" aria-valuenow={0} aria-valuemin={0} aria-valuemax={100}>
-              <div className="progress-bar-fill" style={{ width: '0%' }} />
+            <div className="progress-bar-container" role="progressbar" aria-valuenow={progress ? progress.percentage : 0} aria-valuemin={0} aria-valuemax={100}>
+              <div className="progress-bar-fill" style={{ width: `${progress ? progress.percentage : extractionOutcome ? 100 : 0}%` }} />
             </div>
           </div>
+
+          {/* Extraction Result Summary Banner */}
+          {activeDisplayOutcome && (
+            <div style={{ background: '#0b1323', border: '1px solid #1e293b', borderRadius: '8px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>
+                  {activeDisplayOutcome.bytesRead < (deviceIdentity?.flashInfo.totalBytes || 0) && activeDisplayOutcome.bytesRead > 4096
+                    ? 'Preserved Partial Dump'
+                    : 'Captured Firmware Digest'}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#6ee7b7', wordBreak: 'break-all' }}>
+                  SHA-256: {activeDisplayOutcome.sha256Hash}
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                  Classification: <strong>{activeDisplayOutcome.readability.status.toUpperCase()}</strong> (Shannon Entropy: {activeDisplayOutcome.readability.entropy.toFixed(3)}/8.0) — {activeDisplayOutcome.readability.explanation}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleDownloadBin}
+                  style={{ padding: '8px 12px', fontSize: '12px' }}
+                >
+                  <Download size={14} aria-hidden="true" /> Download .bin ({formatByteSize(activeDisplayOutcome.bytesRead)})
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Diagnostic Log & Terminal */}

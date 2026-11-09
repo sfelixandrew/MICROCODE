@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "node --experimental-strip-types tests/device/connection-framework.test.ts",
-    "test": "node --experimental-strip-types --test tests/device/connection-framework.test.ts tests/device/esp32-adapter.test.ts tests/safety/readonly-assertions.test.ts tests/unit/address.test.ts tests/unit/crypto.test.ts",
+    "test": "node --experimental-strip-types --test tests/device/connection-framework.test.ts tests/device/esp32-adapter.test.ts tests/extraction/esp32-flash-extractor.test.ts tests/safety/readonly-assertions.test.ts tests/unit/address.test.ts tests/unit/crypto.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
