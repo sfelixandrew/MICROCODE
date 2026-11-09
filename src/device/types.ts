@@ -116,3 +116,4 @@ export interface DeviceAdapter {
   disconnect(): Promise<DisconnectResult>;
   cancelOperation(): Promise<void>;
 }
+

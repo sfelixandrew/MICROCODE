@@ -57,8 +57,13 @@ export class ConnectionStateMachine {
       return to === 'disconnected' || to === 'disconnecting';
     }
 
-    // Any non-disconnected state can transition to error or disconnecting
-    if (to === 'error' || to === 'disconnecting') {
+    // Any state can transition to error on failure
+    if (to === 'error') {
+      return true;
+    }
+
+    // Any non-disconnected state can transition to disconnecting
+    if (to === 'disconnecting') {
       return from !== 'disconnected';
     }
 
