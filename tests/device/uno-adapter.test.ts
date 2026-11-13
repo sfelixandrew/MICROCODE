@@ -343,3 +343,4 @@ describe('Stage 6: Arduino Uno R3 Companion Adapter', () => {
     });
   });
 });
+

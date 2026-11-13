@@ -17,12 +17,14 @@ flowchart TD
     S11 --> S12["Stage 12: Hardware Bench & Final Release"]
 
     style S1 fill:#1f4e24,stroke:#48c774,color:#fff
+    style S1 fill:#1f4e24,stroke:#48c774,color:#fff
     style S2 fill:#1f4e24,stroke:#48c774,color:#fff
     style S3 fill:#1f4e24,stroke:#48c774,color:#fff
     style S4 fill:#1f4e24,stroke:#48c774,color:#fff
     style S5 fill:#1f4e24,stroke:#48c774,color:#fff
     style S6 fill:#1f4e24,stroke:#48c774,color:#fff
-    style S7 fill:#1a263b,stroke:#3298dc,color:#fff
+    style S7 fill:#1f4e24,stroke:#48c774,color:#fff
+    style S8 fill:#1a263b,stroke:#3298dc,color:#fff
 ```
 
 ### Stage Breakdown & Strict Acceptance Gates
@@ -35,8 +37,8 @@ flowchart TD
 | **Stage 4** | **ESP32 Connection and Identification** | **COMPLETE**<br>*(Software-Tested)* | - `Esp32Adapter` implemented using pinned `esptool-js 0.7.1` over Web Serial.<br>- User-initiated serial port picker with permission denial & port busy handling.<br>- Dynamic chip identification (detects classic ESP32, S2, S3, C-series, H-series, or Unknown/Unverified).<br>- Dynamic SPI Flash capacity detection via `detectFlashSize()` and raw `readFlashId()`.<br>- Conservative initial baud rate (115,200) with safe retry options.<br>- Diagnostic log panel without exposing raw binary bytes or secrets.<br>- Actionable manual BOOT/RESET button guidance on sync timeout.<br>- Safe `hard_reset` on disconnect to restore board to normal boot.<br>- 36 automated unit & safety tests passed. Zero Flash write or erase. |
 | **Stage 5** | **ESP32 Read-Only Flash Extraction** | **COMPLETE**<br>*(Software-Tested)* | - `Esp32FlashExtractor` implemented using official `readFlash()` API.<br>- Step 1 user-approved 4 KiB test slice at `0x1000` with length and SHA-256 validation.<br>- Step 2 bounded 64 KiB chunk streaming with exact offset ordering.<br>- Shannon entropy and content readability classification (`readable`, `likely_encrypted`, `partially_readable`, `undetermined`).<br>- Real-time progress updates with address ranges and transfer speed.<br>- Non-blocking cancellation via `AbortSignal` with partial data preservation.<br>- Error recovery preserving partial dumps (never silently truncated).<br>- Byte-for-byte in-memory export verification.<br>- Safe hardware reset to preserve running sensor application.<br>- 51 automated unit & safety tests passed. Zero Flash write or erase. |
 | **Stage 6** | **Arduino Uno Flash Extraction & Hardened Local AVR Companion Agent** | **COMPLETE**<br>*(Software-Tested)* | - Python companion bound strictly to loopback `127.0.0.1:8765`.<br>- Origin validation and ephemeral `X-MicroCode-Session` token enforcement.<br>- Serial port enumeration and strict whitelist validation against command injection.<br>- Subprocess argument arrays only; zero `shell=True`, zero write modes, zero chip erase (`-e`).<br>- ATmega328P signature verification (`0x1E 0x95 0x0F`) and Mode 3 lock-bit detection without destructive bypass.<br>- Intel HEX parser reconstituting 32 KiB memory image and distinguishing programmed bytes from unprogrammed `0xFF` padding.<br>- Full browser `ArduinoUnoAdapter` with client-side SHA-256 verification and Intel HEX + binary export.<br>- 14 Python companion tests + 8 TypeScript Uno adapter tests passed. |
-| **Stage 7** | **Binary Parsers (ESP-IDF Partitions & App Headers & AVR Vectors)** | Queued (Next) | - Parser for ESP-IDF partition tables at `0x8000` / `0x9000` with magic `0xAA50`.<br>- Parser for ESP application image headers (`0xE9`, segment counts, entry point in IRAM).<br>- Parser for AVR interrupt vector table (`0x0000` - `0x0032`).<br>- Unit tests covering valid, truncated, corrupted, and erased inputs. |
-| **Stage 8** | **Virtualized Hex & ASCII Inspection Engine** | Queued | - Viewport-virtualized hex/ASCII table supporting multi-megabyte dumps without DOM lag.<br>- Address offset navigation and printable ASCII/UTF-8 extraction.<br>- Partition boundary highlighting.<br>- Verified download controls for `.bin` and `.hex` formats with byte-count and checksum verification. |
+| **Stage 7** | **Firmware Parsing and Memory Map** | **COMPLETE**<br>*(Software-Tested)* | - Offline ESP image parser validating format v1 headers, segment load addresses, XOR checksums, and appended SHA-256.<br>- Offline ESP-IDF partition table parser validating magic 0xAA50, entry records, 16-byte MD5 checksum records, partition overlaps, and out-of-bounds boundaries.<br>- Offline Intel HEX parser verifying 2's complement checksums, address records, gap collation, and non-destructive binary conversion.<br>- ATmega328P memory mapper with vector table parsing, application space, verified vs heuristic bootloader boundary qualifications (fuses), and isolated EEPROM region.<br>- General binary analyzers: file signature detector, printable string extractor (ASCII/UTF-8 with byte offsets), and windowed Shannon entropy heuristic analyzer.<br>- Unified `MemoryMapEngine` generating repeatable reports with strict rule: "Unknown data stays Unknown."<br>- Interactive UI tabs (`Memory Map` and `Strings`) with offline file loader (.bin/.hex) distinguishing verified findings from heuristics.<br>- 36 new parser unit tests passed (95 TS + 14 Python = 109 total). |
+| **Stage 8** | **Virtualized Hex & ASCII Inspection Engine** | Queued (Next) | - Viewport-virtualized hex/ASCII table supporting multi-megabyte dumps without DOM lag.<br>- Address offset navigation and printable ASCII/UTF-8 extraction.<br>- Partition boundary highlighting.<br>- Verified download controls for `.bin` and `.hex` formats with byte-count and checksum verification. |
 | **Stage 9** | **Local Secret Scanner & Redactor** | Queued | - Client-side regex engine detecting Wi-Fi SSIDs/PSKs, cloud API keys, and private keys.<br>- Automatic masking of probable secrets in UI previews and audit reports.<br>- Explicit user confirmation toggle to reveal underlying raw bytes. |
 | **Stage 10** | **Architecture Disassembly Adapters** | Queued | - Xtensa LX6 disassembler for classic ESP32 application segments.<br>- AVR 8-bit disassembler for ATmega328P mapping hardware I/O ports (`PORTB`, `UDR0`, etc.).<br>- Boundary validation: disassembly permitted only when base address and architecture are verified. |
 | **Stage 11** | **Approximate Pseudocode & Control-Flow Reconstruction** | Queued | - Structural analysis recovering approximate control flow (loops, branches, function boundaries).<br>- Transparent confidence scoring and explicit warnings of compiler artifact loss.<br>- Direct side-by-side assembly-to-pseudocode traceability. |
@@ -48,6 +50,12 @@ flowchart TD
 
 | Test Suite | Scope | Status | Passed / Total |
 | :--- | :--- | :---: | :---: |
+| **ESP Image Parser Tests** | Header format v1, segments, entry point, chipId mapping, checksums, SHA-256 | **PASS** | 7 / 7 |
+| **ESP Partition Table Parser Tests** | Magic 0xAA50, entry decoding, MD5 checksum validation, overlaps, out-of-bounds | **PASS** | 6 / 6 |
+| **Intel HEX Parser Tests** | 2's complement checksums, segment addressing, gap collation, binary reconstitution | **PASS** | 6 / 6 |
+| **ATmega328P Memory Mapper Tests** | Vector table, app code, padding, bootloader boundary (heuristic vs verified), EEPROM | **PASS** | 4 / 4 |
+| **General Parsers Tests** | Multi-format signatures, string extraction (ASCII/UTF-8), Shannon entropy heuristic | **PASS** | 9 / 9 |
+| **Unified Memory Map Engine Tests** | Repeatable report, ESP32 full dump, Uno HEX, unknown data preservation, malformed data | **PASS** | 4 / 4 |
 | **Arduino Uno Companion Adapter Tests** | Companion health, ports, 32 KiB extraction, SHA-256 integrity, lock bits, Optiboot | **PASS** | 8 / 8 |
 | **Python Companion Security & AVRDUDE Tests** | Origin check, session tokens, port whitelist, HEX parsing & checksums, static safety | **PASS** | 14 / 14 |
 | **ESP32 Flash Extraction Tests** | Chunk boundaries, test slice, partial dumps, cancellation, classification | **PASS** | 15 / 15 |
@@ -55,5 +63,5 @@ flowchart TD
 | **Device Framework Tests** | State machine, mock adapter, errors, cancellation | **PASS** | 13 / 13 |
 | **Safety Assertions** | Zero write/erase APIs in codebase | **PASS** | 5 / 5 |
 | **Address Arithmetic** | Hex formatting, byte sizes, chunk slices | **PASS** | 5 / 5 |
-| **Cryptographic Hashing** | SHA-256 test vectors & determinism | **PASS** | 3 / 3 |
-| **Total Test Count** | All automated tests | **PASS** | **73 / 73 (100%)** |
+| **Cryptographic Hashing** | SHA-256 test vectors & determinism, pure-TS MD5 | **PASS** | 3 / 3 |
+| **Total Test Count** | All automated tests | **PASS** | **109 / 109 (100%)** |
