@@ -54,7 +54,7 @@ export class EntropyAnalyzer {
     if (entropy <= 2.5) {
       return 'low_density';
     }
-    if (entropy <= 7.1) {
+    if (entropy <= 6.8) {
       return 'plaintext';
     }
     return 'compressed_or_encrypted';

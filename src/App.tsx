@@ -34,6 +34,10 @@ import { MemoryMapEngine } from './parsers/memoryMapEngine.ts';
 import type { MemoryMapReport } from './parsers/types.ts';
 import { MemoryMapView } from './components/MemoryMapView.tsx';
 import { StringsView } from './components/StringsView.tsx';
+import { DisassemblerRegistry } from './disassembly/DisassemblerRegistry.ts';
+import type { DisassemblyResult } from './disassembly/types.ts';
+import { AssemblyViewer } from './components/AssemblyViewer.tsx';
+import { IntelHexParser } from './parsers/avr/intelHexParser.ts';
 
 type AnalysisTab = 'overview' | 'memory_map' | 'strings' | 'hex_bin' | 'assembly' | 'pseudocode' | 'report';
 
@@ -65,6 +69,13 @@ export const App: React.FC = () => {
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
   const [isTestSliceRunning, setIsTestSliceRunning] = useState<boolean>(false);
   const [progress, setProgress] = useState<ExtractionProgressUpdate | null>(null);
+
+  // Disassembly State (Stage 8)
+  const [disassemblyResult, setDisassemblyResult] = useState<DisassemblyResult | null>(null);
+  const [isDisassembling, setIsDisassembling] = useState<boolean>(false);
+  const [currentFirmwareBytes, setCurrentFirmwareBytes] = useState<Uint8Array | null>(null);
+  const [currentFirmwareFileName, setCurrentFirmwareFileName] = useState<string>('');
+  const [currentFirmwareSha256, setCurrentFirmwareSha256] = useState<string>('');
 
   const [logs, setLogs] = useState<Array<{ id: string; time: string; cat: string; msg: string }>>([
     { id: '1', time: new Date().toLocaleTimeString(), cat: 'SYSTEM', msg: 'MICROCODE INSPECTOR initialized in Stage 7 Parsing mode.' },
@@ -139,19 +150,98 @@ export const App: React.FC = () => {
     };
   }, [selectedTarget]);
 
+  // Disassembly runner
+  const handleDisassemble = async (
+    customBaseAddress?: number,
+    offset?: number,
+    length?: number
+  ) => {
+    let bytes: Uint8Array | null = currentFirmwareBytes;
+    if (!bytes) {
+      if (extractionOutcome?.rawBytes) {
+        bytes = extractionOutcome.rawBytes;
+      } else if (testSliceOutcome?.rawBytes) {
+        bytes = testSliceOutcome.rawBytes;
+      }
+    }
+
+    if (!bytes || bytes.length === 0) {
+      addLog('WARN', 'No firmware bytes available to disassemble.');
+      return;
+    }
+
+    const arch: TargetArchitecture =
+      memoryMapReport?.targetArchitecture ||
+      (deviceIdentity?.architecture && deviceIdentity.architecture !== 'unknown'
+        ? deviceIdentity.architecture
+        : selectedTarget === 'AVR_ATMEGA'
+          ? 'avr8'
+          : 'xtensa-lx6');
+
+    const baseAddress =
+      customBaseAddress !== undefined
+        ? customBaseAddress
+        : arch === 'xtensa-lx6'
+          ? 0x40080000
+          : 0x0000;
+
+    setIsDisassembling(true);
+    addLog(
+      'DISASSEMBLER',
+      `Disassembling firmware for ${arch.toUpperCase()} at base address ${formatHexAddress(baseAddress, 8)}...`
+    );
+
+    try {
+      const registry = DisassemblerRegistry.getInstance();
+      const res = await registry.disassemble({
+        data: bytes,
+        baseAddress,
+        architecture: arch,
+        offset,
+        length,
+        mcuModel: deviceIdentity?.model || (selectedTarget === 'AVR_ATMEGA' ? 'ATmega328P' : 'ESP32'),
+      });
+
+      setDisassemblyResult(res);
+      if (res.success) {
+        addLog(
+          'DISASSEMBLER',
+          `Decoded ${res.totalInstructions} instructions (${res.undecodableCount} raw/erased). Confidence: ${res.confidence.toUpperCase()}`
+        );
+      } else {
+        addLog(
+          'WARN',
+          `Disassembly unavailable for ${arch.toUpperCase()}: ${res.confidenceReason}`
+        );
+      }
+    } catch (err: any) {
+      addLog('ERROR', `Disassembly exception: ${err.message}`);
+    } finally {
+      setIsDisassembling(false);
+    }
+  };
+
   // Load offline file handler (.bin or .hex)
   const handleLoadOfflineFile = (file: File) => {
     const reader = new FileReader();
     const isHex = file.name.toLowerCase().endsWith('.hex');
 
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         let input: Uint8Array | string;
+        let firmwareBytes: Uint8Array;
+
         if (isHex) {
           input = reader.result as string;
+          const parsedHex = IntelHexParser.parse(input);
+          firmwareBytes = parsedHex.denseBinary;
         } else {
-          input = new Uint8Array(reader.result as ArrayBuffer);
+          firmwareBytes = new Uint8Array(reader.result as ArrayBuffer);
+          input = firmwareBytes;
         }
+
+        setCurrentFirmwareBytes(firmwareBytes);
+        setCurrentFirmwareFileName(file.name);
 
         addLog('PARSER', `Parsing offline firmware file: ${file.name} (${formatByteSize(file.size)})...`);
         const report = MemoryMapEngine.analyze(input, {
@@ -163,12 +253,24 @@ export const App: React.FC = () => {
         });
 
         setMemoryMapReport(report);
+        setCurrentFirmwareSha256(report.sha256);
         setActiveTab('memory_map');
         addLog(
           'PARSER',
           `Parsed ${report.regions.length} regions (${report.regions.filter((r) => r.confidence === 'verified').length} verified, ` +
             `${report.regions.filter((r) => r.confidence === 'heuristic').length} heuristic). Target: ${report.targetArchitecture.toUpperCase()}`,
         );
+
+        // Auto-run disassembly for the parsed architecture
+        const registry = DisassemblerRegistry.getInstance();
+        const baseAddr = report.targetArchitecture === 'xtensa-lx6' ? 0x40080000 : 0x0000;
+        const disResult = await registry.disassemble({
+          data: firmwareBytes,
+          baseAddress: baseAddr,
+          architecture: report.targetArchitecture,
+          mcuModel: report.targetArchitecture === 'avr8' ? 'ATmega328P' : 'ESP32',
+        });
+        setDisassemblyResult(disResult);
       } catch (err: any) {
         setDeviceError(`Failed to parse offline file: ${err.message}`);
         addLog('ERROR', `Offline parse error: ${err.message}`);
@@ -694,9 +796,14 @@ export const App: React.FC = () => {
           role="tab"
           aria-selected={activeTab === 'assembly'}
           className={`tab-btn ${activeTab === 'assembly' ? 'active' : ''}`}
-          onClick={() => setActiveTab('assembly')}
+          onClick={() => {
+            setActiveTab('assembly');
+            if (!disassemblyResult && (currentFirmwareBytes || extractionOutcome?.rawBytes)) {
+              handleDisassemble();
+            }
+          }}
         >
-          Assembly <span style={{ fontSize: '10px', color: '#64748b' }}>(Stage 10)</span>
+          Assembly <span style={{ fontSize: '10px', color: '#38bdf8' }}>(Stage 8)</span>
         </button>
 
         <button
@@ -1130,17 +1237,24 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 5: Assembly Disassembler Placeholder (Stage 10) */}
+        {/* Tab 5: Architecture-Specific Assembly Viewer (Stage 8) */}
         {activeTab === 'assembly' && (
-          <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
-            <Code size={40} color="#475569" style={{ margin: '0 auto 16px' }} />
-            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f1f5f9', marginBottom: '8px' }}>
-              Architecture Disassembly Engine (Stage 10)
-            </h3>
-            <p style={{ fontSize: '13px', color: '#94a3b8', maxWidth: '480px', margin: '0 auto' }}>
-              Architecture-specific disassembler adapters for Xtensa LX6 (ESP32) and AVR (ATmega328P) mapping hardware registers, I/O ports, and interrupt handlers.
-            </p>
-          </div>
+          <AssemblyViewer
+            result={disassemblyResult}
+            currentArchitecture={
+              memoryMapReport?.targetArchitecture ||
+              (deviceIdentity?.architecture && deviceIdentity.architecture !== 'unknown'
+                ? deviceIdentity.architecture
+                : selectedTarget === 'AVR_ATMEGA'
+                  ? 'avr8'
+                  : 'xtensa-lx6')
+            }
+            firmwareData={currentFirmwareBytes || extractionOutcome?.rawBytes || testSliceOutcome?.rawBytes}
+            sourceFileName={currentFirmwareFileName}
+            sha256={currentFirmwareSha256 || extractionOutcome?.sha256Hash || testSliceOutcome?.sha256Hash}
+            onDisassemble={handleDisassemble}
+            isLoading={isDisassembling}
+          />
         )}
 
         {/* Tab 6: Pseudocode Generator Placeholder (Stage 11) */}
