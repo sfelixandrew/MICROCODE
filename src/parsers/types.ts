@@ -98,3 +98,4 @@ export interface MemoryMapReport {
   generatedAtIso: string;
   parserEngineVersion: string;
 }
+

@@ -108,3 +108,4 @@ describe('Stage 7: General Parsers (Signatures, Strings & Entropy)', () => {
     });
   });
 });
+

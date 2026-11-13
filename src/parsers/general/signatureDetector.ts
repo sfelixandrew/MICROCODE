@@ -131,3 +131,4 @@ export class SignatureDetector {
     return signatures;
   }
 }
+

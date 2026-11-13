@@ -102,3 +102,4 @@ describe('Stage 7: Intel HEX Parser', () => {
     assert.equal(bin[32767], 0xff);
   });
 });
+

@@ -493,3 +493,4 @@ export const MemoryMapView: React.FC<MemoryMapViewProps> = ({
     </div>
   );
 };
+

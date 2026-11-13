@@ -104,3 +104,4 @@ describe('Stage 7: ATmega328P Memory Mapper', () => {
     assert.equal(eepromInRegions, false, 'EEPROM must remain separate from Flash memory map');
   });
 });
+

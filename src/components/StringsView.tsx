@@ -139,3 +139,4 @@ export const StringsView: React.FC<StringsViewProps> = ({ strings }) => {
     </div>
   );
 };
+
