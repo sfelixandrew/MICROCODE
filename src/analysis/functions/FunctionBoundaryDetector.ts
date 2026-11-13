@@ -259,3 +259,4 @@ export class FunctionBoundaryDetector {
     return functions;
   }
 }
+

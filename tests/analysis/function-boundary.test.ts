@@ -61,3 +61,4 @@ test('FunctionBoundaryDetector flags undecodable ranges and adjusts confidence',
   assert.equal(fn.undecodableInstructionCount, 1);
   assert.ok(fn.confidenceReasons.some((r) => r.includes('undecodable')));
 });
+

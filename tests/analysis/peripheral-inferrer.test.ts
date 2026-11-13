@@ -48,3 +48,4 @@ test('PeripheralAccessInferrer detects I/O register writes and separates facts f
   assert.equal(accesses[4].accessType, 'write');
   assert.ok(accesses[4].inferredMeaning.includes('Serial'));
 });
+

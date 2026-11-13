@@ -55,3 +55,4 @@ test('OptionalLlmExplainer local mode generates hypothesis without network calls
   assert.ok(result.explanationText.includes('Reconstructed Logic Hypothesis'));
   assert.ok(result.hypothesisNotice.includes('UNVERIFIED AI HYPOTHESIS'));
 });
+

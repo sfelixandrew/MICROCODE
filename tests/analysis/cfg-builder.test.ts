@@ -77,3 +77,4 @@ test('ControlFlowGraphBuilder detects loops and cycles', () => {
   assert.ok(loopEdge);
   assert.equal(loopEdge.toAddress, 0x0020);
 });
+

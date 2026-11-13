@@ -65,3 +65,4 @@ test('PseudocodeGenerator preserves unknown and undecodable instruction segments
   assert.ok(undecodableMapping);
   assert.ok(undecodableMapping.confirmedFact.includes('Undecodable opcode'));
 });
+

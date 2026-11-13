@@ -43,3 +43,4 @@ test('LoopPatternDetector identifies counted loops with counter variables', () =
   assert.equal(loops[0].approximateIterationVariable, 'r24');
   assert.equal(loops[0].confidence, 'high');
 });
+

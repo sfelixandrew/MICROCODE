@@ -161,3 +161,4 @@ export interface AnalysisReport {
   limitations: string[];
   warnings: string[];
 }
+
