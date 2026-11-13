@@ -59,3 +59,4 @@ export interface ArchitectureDisassembler {
   getLimitations(): string[];
   disassemble(request: DisassemblyRequest): Promise<DisassemblyResult>;
 }
+

@@ -115,3 +115,4 @@ test('XtensaDisassemblerAdapter handles tool runner error gracefully', async () 
   assert.equal(result.confidence, 'unsupported');
   assert.ok(result.errors.some((e) => e.includes('bad architecture')));
 });
+

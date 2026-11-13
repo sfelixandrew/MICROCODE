@@ -290,3 +290,4 @@ export class XtensaDisassemblerAdapter implements ArchitectureDisassembler {
     return { instructions, undecodableCount };
   }
 }
+

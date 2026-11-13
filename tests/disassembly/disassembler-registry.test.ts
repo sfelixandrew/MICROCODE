@@ -66,3 +66,4 @@ test('DisassemblerRegistry lists supported and recognized architectures', () => 
   assert.ok(lx7);
   assert.equal(lx7.isSupported, false);
 });
+

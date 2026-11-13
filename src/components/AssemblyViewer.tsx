@@ -573,3 +573,4 @@ export const AssemblyViewer: React.FC<AssemblyViewerProps> = ({
     </div>
   );
 };
+

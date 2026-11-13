@@ -94,3 +94,4 @@ export class UnsupportedArchAdapter implements ArchitectureDisassembler {
     };
   }
 }
+

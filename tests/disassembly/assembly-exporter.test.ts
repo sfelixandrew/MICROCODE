@@ -98,3 +98,4 @@ test('formatAssemblyListing handles empty/unsupported results with error notices
   assert.ok(output.includes('# Toolchain xtensa-esp32s3-elf-objdump required.'));
   assert.ok(output.includes('No decoded instructions available'));
 });
+
