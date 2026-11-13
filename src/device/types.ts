@@ -25,6 +25,12 @@ export type DeviceErrorCode =
   | 'READ_FAILED'
   | 'TIMEOUT'
   | 'OPERATION_CANCELLED'
+  | 'COMPANION_UNAVAILABLE'
+  | 'AVRDUDE_NOT_FOUND'
+  | 'BAD_SIGNATURE'
+  | 'LOCK_PROTECTION_BLOCKED'
+  | 'UNSUPPORTED_BOOTLOADER'
+  | 'INTEGRITY_MISMATCH'
   | 'UNKNOWN_ERROR';
 
 export interface DeviceError extends Error {

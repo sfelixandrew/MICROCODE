@@ -154,3 +154,4 @@ export function classifyFirmwareContent(
     explanation: `Header signatures not detected; entropy is ${entropy.toFixed(3)}/8.0. Cannot definitively determine encryption status without partition analysis.`,
   };
 }
+

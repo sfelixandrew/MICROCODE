@@ -1,0 +1,4 @@
+# MicroCode Inspector AVR Companion Requirements
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+pyserial>=3.5
