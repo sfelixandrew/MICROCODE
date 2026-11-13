@@ -38,6 +38,9 @@ import { DisassemblerRegistry } from './disassembly/DisassemblerRegistry.ts';
 import type { DisassemblyResult } from './disassembly/types.ts';
 import { AssemblyViewer } from './components/AssemblyViewer.tsx';
 import { IntelHexParser } from './parsers/avr/intelHexParser.ts';
+import { AnalysisEngine } from './analysis/AnalysisEngine.ts';
+import type { AnalysisReport } from './analysis/types.ts';
+import { PseudocodeView } from './components/PseudocodeView.tsx';
 
 type AnalysisTab = 'overview' | 'memory_map' | 'strings' | 'hex_bin' | 'assembly' | 'pseudocode' | 'report';
 
@@ -76,6 +79,10 @@ export const App: React.FC = () => {
   const [currentFirmwareBytes, setCurrentFirmwareBytes] = useState<Uint8Array | null>(null);
   const [currentFirmwareFileName, setCurrentFirmwareFileName] = useState<string>('');
   const [currentFirmwareSha256, setCurrentFirmwareSha256] = useState<string>('');
+
+  // Analysis & Approximate Pseudocode State
+  const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
 
   const [logs, setLogs] = useState<Array<{ id: string; time: string; cat: string; msg: string }>>([
     { id: '1', time: new Date().toLocaleTimeString(), cat: 'SYSTEM', msg: 'MICROCODE INSPECTOR initialized in Stage 7 Parsing mode.' },
@@ -203,12 +210,20 @@ export const App: React.FC = () => {
       });
 
       setDisassemblyResult(res);
-      if (res.success) {
+      if (res.success && res.instructions.length > 0) {
+        setIsAnalyzing(true);
+        const analysis = AnalysisEngine.analyze(res, arch);
+        setAnalysisReport(analysis);
+        setIsAnalyzing(false);
+        addLog(
+          'ANALYSIS',
+          `Reconstructed ${analysis.functions.length} approximate function(s) with full assembly traceability.`
+        );
         addLog(
           'DISASSEMBLER',
           `Decoded ${res.totalInstructions} instructions (${res.undecodableCount} raw/erased). Confidence: ${res.confidence.toUpperCase()}`
         );
-      } else {
+      } else if (!res.success) {
         addLog(
           'WARN',
           `Disassembly unavailable for ${arch.toUpperCase()}: ${res.confidenceReason}`
@@ -271,6 +286,14 @@ export const App: React.FC = () => {
           mcuModel: report.targetArchitecture === 'avr8' ? 'ATmega328P' : 'ESP32',
         });
         setDisassemblyResult(disResult);
+        if (disResult.success && disResult.instructions.length > 0) {
+          const analysis = AnalysisEngine.analyze(disResult, report.targetArchitecture);
+          setAnalysisReport(analysis);
+          addLog(
+            'ANALYSIS',
+            `Reconstructed ${analysis.functions.length} approximate function(s) with full assembly traceability.`
+          );
+        }
       } catch (err: any) {
         setDeviceError(`Failed to parse offline file: ${err.message}`);
         addLog('ERROR', `Offline parse error: ${err.message}`);
@@ -811,9 +834,15 @@ export const App: React.FC = () => {
           role="tab"
           aria-selected={activeTab === 'pseudocode'}
           className={`tab-btn ${activeTab === 'pseudocode' ? 'active' : ''}`}
-          onClick={() => setActiveTab('pseudocode')}
+          onClick={() => {
+            setActiveTab('pseudocode');
+            if (!analysisReport && disassemblyResult && disassemblyResult.instructions.length > 0) {
+              const analysis = AnalysisEngine.analyze(disassemblyResult);
+              setAnalysisReport(analysis);
+            }
+          }}
         >
-          Pseudocode <span style={{ fontSize: '10px', color: '#64748b' }}>(Stage 11)</span>
+          Pseudocode {analysisReport?.functions.length ? `(${analysisReport.functions.length})` : ''}
         </button>
 
         <button
@@ -1257,17 +1286,9 @@ export const App: React.FC = () => {
           />
         )}
 
-        {/* Tab 6: Pseudocode Generator Placeholder (Stage 11) */}
+        {/* Tab 6: Traceable Approximate Pseudocode Viewer */}
         {activeTab === 'pseudocode' && (
-          <div className="card" style={{ textAlign: 'center', padding: '48px 24px' }}>
-            <FileSearch size={40} color="#475569" style={{ margin: '0 auto 16px' }} />
-            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f1f5f9', marginBottom: '8px' }}>
-              Approximate Pseudocode &amp; Logic Explanation Engine (Stage 11)
-            </h3>
-            <p style={{ fontSize: '13px', color: '#94a3b8', maxWidth: '480px', margin: '0 auto' }}>
-              Control-flow graph reconstruction, loop recovery, and approximate logic explanation with transparent confidence metrics.
-            </p>
-          </div>
+          <PseudocodeView report={analysisReport} isLoading={isAnalyzing} />
         )}
 
         {/* Tab 7: Audit Report Placeholder (Stage 12) */}
